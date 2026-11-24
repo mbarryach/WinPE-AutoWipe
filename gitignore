@@ -1,0 +1,12 @@
+# Imágenes de Windows / WinPE (propiedad de Microsoft, y muy pesadas)
+*.wim
+*.esd
+*.iso
+
+# Drivers (cada uno tiene su propia licencia y depende del modelo)
+Drivers/Disk/*
+!Drivers/Disk/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.bak
