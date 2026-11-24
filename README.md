@@ -1,31 +1,60 @@
-# USB booteable WinPE para borrar el disco de portátiles de empresa
+# SOKiller
 
-USB que, al arrancar un portátil, ejecuta automáticamente un script que borra la tabla de particiones del disco interno (Windows, usuarios y datos de antiguos empleados) y apaga el equipo. Pensado para dejar portátiles limpios antes de reasignarlos.
+USB booteable (WinPE) que borra de forma desatendida la tabla de particiones del disco interno de un portátil y lo apaga. Pensado para dejar equipos de empresa limpios (sin Windows, usuarios ni datos de antiguos empleados) antes de reasignarlos.
 
-> **Aviso:** el script es destructivo y no tiene vuelta atrás. Pruébalo siempre primero en equipos sin datos.
+> ## ⚠️ Aviso
+> **Este script borra datos de forma irreversible.** Úsalo bajo tu propia responsabilidad y pruébalo siempre primero en equipos sin datos importantes. El autor no se hace responsable de pérdidas de datos, de borrar el disco equivocado ni de cualquier otro daño derivado de su uso.
 
 ## Cómo funciona
 
 1. El equipo arranca desde el USB con una imagen WinPE (`boot.wim`).
-2. WinPE ejecuta `startnet.cmd` (incluido dentro del WIM).
-3. `startnet.cmd` busca `borrar_todo.cmd` en todas las unidades (la letra del USB cambia según el portátil) y lo ejecuta con `call`.
+2. WinPE ejecuta `startnet.cmd`, que está dentro del WIM.
+3. `startnet.cmd` busca `borrar_todo.cmd` en todas las unidades (la letra del USB cambia según el equipo) y lo ejecuta con `call`.
 4. `borrar_todo.cmd` carga los drivers de almacenamiento de `\Drivers\Disk`, comprueba que el disco objetivo no es un USB y lo limpia con `diskpart` (`clean` + `convert gpt`).
-5. `startnet.cmd` apaga el equipo con `wpeutil shutdown` (no reinicia, para que no vuelva a arrancar del USB y repita el borrado).
+5. `startnet.cmd` apaga el equipo con `wpeutil shutdown`. No reinicia, para que no vuelva a arrancar del USB y repita el borrado.
 
-## Estructura
+## Contenido del repositorio
+
+```
+.
+├── startnet.cmd          # Va DENTRO del boot.wim (Windows\System32\startnet.cmd)
+├── borrar_todo.cmd       # Va en la raíz del USB
+├── Drivers/Disk/         # Drivers .inf de almacenamiento (no incluidos)
+├── .gitignore
+├── .gitattributes
+├── LICENSE
+└── README.md
+```
+
+Estructura del USB una vez preparado:
 
 ```
 USB (FAT32)
-├── borrar_todo.cmd        <- script de borrado (editable sin tocar el WIM)
-├── Drivers\Disk\          <- drivers .inf de almacenamiento (NVMe, RAID, Intel VMD/RST...)
-└── sources\boot.wim       <- WinPE con startnet.cmd dentro
+├── borrar_todo.cmd
+├── Drivers\Disk\         <- drivers .inf (NVMe, RAID, Intel VMD/RST...)
+└── sources\boot.wim      <- WinPE con startnet.cmd dentro
 ```
 
-`startnet.cmd` va dentro del WIM, en `Windows\System32\startnet.cmd`.
+El repositorio **no incluye** el `boot.wim`, ISOs de Windows ni drivers: son de terceros y no se pueden redistribuir. Hay que generarlos o descargarlos (ver más abajo).
 
-## Preparar la imagen
+## Requisitos
 
-Exportar el índice 1 (WinPE puro, sin el instalador de Windows) **marcándolo como arrancable**:
+- Un PC con Windows para preparar el USB.
+- ISO oficial de Windows 10/11 (de ahí sale el `boot.wim`) o el Windows ADK con el complemento WinPE.
+- [Rufus](https://rufus.ie) para crear el USB.
+- Portátiles x64 (Intel/AMD).
+
+## Preparar el USB
+
+### 1. Crear el USB con Rufus
+
+1. Abre Rufus y selecciona el USB y la ISO oficial de Windows.
+2. Esquema de partición **GPT**, sistema de destino **UEFI** y sistema de archivos **FAT32**.
+3. Crea el USB.
+
+### 2. Preparar un boot.wim con startnet.cmd
+
+Exporta el índice 1 (WinPE puro, sin el instalador de Windows) **marcándolo como arrancable**:
 
 ```bat
 dism /Export-Image /SourceImageFile:D:\sources\boot.wim /SourceIndex:1 /DestinationImageFile:C:\boot_nuevo.wim /Bootable
@@ -34,117 +63,55 @@ copy startnet.cmd C:\mount\Windows\System32\startnet.cmd
 dism /Unmount-Wim /MountDir:C:\mount /Commit
 ```
 
-Después, copiar `boot_nuevo.wim` al USB como `sources\boot.wim` (guardando antes una copia del original).
+(`D:` es el USB creado con Rufus y `C:\mount` una carpeta vacía.)
 
-Alternativa más limpia: crear el WinPE con el Windows ADK + complemento WinPE (`copype amd64` y `MakeWinPEMedia /UFD`, que formatea el USB).
+Copia `C:\boot_nuevo.wim` al USB como `sources\boot.wim`, sobrescribiendo el original (guarda antes una copia).
 
-## startnet.cmd
+> Alternativa sin Rufus: crear el WinPE con el Windows ADK (`copype amd64` y `MakeWinPEMedia /UFD`, que formatea el USB). Después copia `startnet.cmd` al WIM como en el paso anterior.
 
-```bat
-wpeinit
-set "SCRIPT="
-for %%D in (C D E F G H I J K L M N O P Q R S T U V W Y Z) do (
-    if exist "%%D:\borrar_todo.cmd" if not defined SCRIPT set "SCRIPT=%%D:\borrar_todo.cmd"
-)
-if defined SCRIPT (
-    call "%SCRIPT%"
-) else (
-    echo [ERROR] No se encontro borrar_todo.cmd en ninguna unidad.
-    pause
-)
-wpeutil shutdown
-```
+### 3. Copiar los scripts y drivers
 
-## borrar_todo.cmd
+- Copia `borrar_todo.cmd` a la raíz del USB.
+- Copia los drivers de almacenamiento (.inf) en `Drivers\Disk\` del USB. Los fabricantes los ofrecen en el pack de Intel RST/VMD, controladores NVMe, etc.
 
-```bat
-@echo off
-setlocal enabledelayedexpansion
+## Configuración
 
-rem 1 = muestra mensajes y pausas (pruebas) / 0 = desatendido
-set "DEBUG=1"
-set "TARGET_DISK=1"
+Al inicio de `borrar_todo.cmd`:
 
-echo === Buscando carpeta Drivers\Disk en unidades ===
-set "DRIVER_ROOT="
-for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
-    if exist "%%D:\Drivers\Disk" (
-        echo [OK] Encontrada carpeta: %%D:\Drivers\Disk
-        if not defined DRIVER_ROOT set "DRIVER_ROOT=%%D:\Drivers\Disk"
-    )
-)
+| Variable | Valor | Descripción |
+|---|---|---|
+| `DEBUG` | `1` | Muestra mensajes y pausas (para pruebas) |
+| `DEBUG` | `0` | Modo desatendido, sin pausas |
+| `TARGET_DISK` | `1` | Número del disco que se borrará |
 
-if not defined DRIVER_ROOT (
-    echo [ERROR] No se encontro ninguna carpeta \Drivers\Disk en ninguna unidad.
-    pause
-    goto :fin
-)
-
-echo.
-echo === Cargando controladores desde %DRIVER_ROOT% ===
-set /a COUNT_INF=0
-for /r "%DRIVER_ROOT%" %%F in (*.inf) do (
-    set /a COUNT_INF+=1
-    echo [INF !COUNT_INF!] Cargando: "%%F"
-    drvload "%%F"
-    echo     -> Codigo de salida drvload: !errorlevel!
-)
-echo Total de archivos .inf procesados: !COUNT_INF!
-if "%DEBUG%"=="1" pause
-
-echo.
-echo === Listado actual de discos ===
-(
-    echo list disk
-) | diskpart
-if "%DEBUG%"=="1" pause
-
-rem --- Seguridad: abortar si el disco objetivo es un USB ---
-(
-    echo select disk %TARGET_DISK%
-    echo detail disk
-) > "%TEMP%\check.txt"
-diskpart /s "%TEMP%\check.txt" > "%TEMP%\check_out.txt"
-findstr /i "USB" "%TEMP%\check_out.txt" >nul
-if !errorlevel! equ 0 (
-    echo [ERROR] El disco %TARGET_DISK% parece ser un USB. Abortando.
-    pause
-    goto :fin
-)
-
-echo.
-echo === Borrando disco %TARGET_DISK% ===
-(
-    echo select disk %TARGET_DISK%
-    echo clean
-    echo convert gpt
-) > "%TEMP%\limpiar.txt"
-diskpart /s "%TEMP%\limpiar.txt"
-echo Codigo de salida diskpart: !errorlevel!
-if "%DEBUG%"=="1" pause
-
-:fin
-endlocal
-```
+Los `pause` de los mensajes de error se mantienen siempre, para ver el problema antes de que el equipo se apague.
 
 ## Uso
 
-1. Con `DEBUG=1`, probar en un portátil y revisar el `list disk` para confirmar que el disco objetivo es el correcto.
-2. Cambiar a `DEBUG=0` en el `borrar_todo.cmd` del USB (no hace falta tocar el WIM).
-3. Conectar el USB, arrancar (F12 / F9 / Esc según la marca) y esperar a que el equipo se apague solo.
-4. **Quitar el USB** antes de volver a encender, para que no repita el borrado.
+1. Con `DEBUG=1`, prueba en un portátil y revisa el `list disk` para confirmar que `TARGET_DISK` es el disco interno.
+2. Cambia a `DEBUG=0` en el `borrar_todo.cmd` del USB (no hace falta tocar el WIM).
+3. Conecta el USB, arranca desde él (F12 / F9 / Esc según la marca) y espera a que el equipo se apague solo.
+4. **Quita el USB** antes de volver a encender, para que no repita el borrado.
 
-Al reiniciar sin sistema, el equipo mostrará `Start PXE over IPv4/IPv6`: es normal (no hay nada que arrancar). Se puede desactivar el arranque por red en la BIOS.
+Al encender un equipo ya limpio verás `Start PXE over IPv4/IPv6`: es normal (no hay nada que arrancar). Puedes desactivar el arranque por red en la BIOS.
 
-## Problemas encontrados y soluciones
+## Seguridad integrada
+
+- Si el disco objetivo aparece como USB en `detail disk`, el script aborta sin borrar nada.
+- Si no encuentra la carpeta `Drivers\Disk`, el script aborta.
+
+Aun así, **verifica siempre la numeración de discos** en cada modelo nuevo: no es la misma en todos los equipos.
+
+## Problemas habituales
 
 | Problema | Causa | Solución |
 |---|---|---|
 | Hay que abrir Shift+F10 y lanzar el script a mano | `startnet.cmd` no se ejecutaba: la imagen arrancada no era la modificada o arrancaba Windows Setup | Exportar solo el índice 1 y usarlo como `boot.wim` |
 | El equipo se reiniciaba antes de borrar | `start cmd /k` no espera a que termine el script | Usar `call` |
-| El script no se encuentra | La letra de unidad del USB cambia entre equipos (y en WinPE el WIM es `X:`) | Buscar `borrar_todo.cmd` en todas las unidades |
+| No se encuentra el script | La letra de unidad del USB cambia entre equipos | Buscar `borrar_todo.cmd` en todas las unidades |
 | Error `winload.efi` al arrancar | Al exportar el índice 1 se perdió la marca de arrancable | Exportar con `/Bootable` |
 | Vuelve a arrancar del USB y repite el borrado | `wpeutil reboot` con el USB puesto | Usar `wpeutil shutdown` |
+| No aparece el disco en `list disk` | Falta el driver de almacenamiento (Intel VMD/RST, RAID) | Añadir el driver a `Drivers\Disk` o cambiar RAID a AHCI en la BIOS |
 
 ## Compatibilidad
 
@@ -163,8 +130,11 @@ Esta imagen solo ejecuta el script de borrado. Para instalar otro sistema (por e
 
 ## Limitaciones y mejoras pendientes
 
-- Funciona en cualquier marca x64 (Dell, HP, Lenovo, Asus...). No sirve para equipos ARM (haría falta WinPE arm64).
-- Algunos modelos necesitan drivers de almacenamiento (Intel VMD/RST, RAID) en `Drivers\Disk`.
 - El disco objetivo está fijado a `TARGET_DISK=1`. Mejora pendiente: elegir automáticamente el disco interno más grande que no sea USB.
 - Si no existe `Drivers\Disk`, el script aborta. Mejora pendiente: avisar y continuar sin drivers.
 - `clean` solo elimina la tabla de particiones; los datos siguen en el disco. Para un borrado más completo: `clean all` (lento) o Secure Erase del fabricante en SSD/NVMe.
+- Probado en portátiles propios con un único disco interno; otros modelos pueden requerir ajustes.
+
+## Licencia
+
+[MIT](LICENSE)
