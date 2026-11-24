@@ -1,4 +1,3 @@
-# SOKiller
 # USB booteable WinPE para borrar el disco de portátiles de empresa
 
 USB que, al arrancar un portátil, ejecuta automáticamente un script que borra la tabla de particiones del disco interno (Windows, usuarios y datos de antiguos empleados) y apaga el equipo. Pensado para dejar portátiles limpios antes de reasignarlos.
